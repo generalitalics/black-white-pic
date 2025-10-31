@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 
 from quickdraw_fetcher import fetch_categories, fetch_random_image_and_label
-from processor import to_binary_matrix
+from processor import to_binary_matrix, preprocess_to_28x28
 from emoji_fetcher import (
     fetch_emoji_catalog,
     fetch_random_emoji_image,
@@ -85,6 +85,12 @@ def run_cli() -> None:
         help="Portion of ON pixels per cell for method=fraction (0..1)",
     )
     parser.add_argument(
+        "--threshold-mode",
+        choices=["global", "otsu"],
+        default="global",
+        help="Thresholding mode: global fixed threshold or Otsu auto-threshold",
+    )
+    parser.add_argument(
         "--print-matrix",
         action="store_true",
         help="Also print a human-readable 7x7 matrix",
@@ -126,6 +132,23 @@ def run_cli() -> None:
         "--emoji-catalog-url",
         action="append",
         help="Override emoji catalog URL(s). Can repeat; first that works is used.",
+    )
+    parser.add_argument(
+        "--autocontrast",
+        action="store_true",
+        help="Apply autocontrast before resizing/binarization (recommended for emojis)",
+    )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=1.0,
+        help="Gamma correction (>1 darkens midtones, <1 brightens)",
+    )
+    parser.add_argument(
+        "--blur",
+        type=float,
+        default=0.0,
+        help="Gaussian blur radius before processing (reduces stripe artifacts)",
     )
     parser.add_argument(
         "--emoji-fetch-retries",
@@ -210,12 +233,14 @@ def run_cli() -> None:
                                 label = (match.description or "emoji").replace("_", " ")
                     except Exception:
                         pass
-            # Convert raw emoji to 28x28 grayscale array for processing pipeline
+            # Convert raw emoji to 28x28 grayscale with preprocessing
             try:
-                img28 = (
-                    raw_img.convert("L").resize((28, 28), resample=Image.BOX)
+                img28 = preprocess_to_28x28(
+                    raw_img,
+                    autocontrast=bool(args.autocontrast),
+                    gamma=float(args.gamma),
+                    blur_radius=float(args.blur),
                 )
-                img28 = np.asarray(img28, dtype=np.uint8)
             except Exception as e:
                 die(f"Failed to convert emoji image to 28x28 grayscale: {e}")
             if img28.shape != (28, 28):
@@ -232,15 +257,26 @@ def run_cli() -> None:
     except Exception:
         raise SystemExit("--size must be in format WIDTHxHEIGHT, e.g., 7x7")
 
+    # Auto-polarity: center color becomes foreground (black squares), borders become background
+    # Compute on the preprocessed 28x28 grayscale image
+    c0, c1 = 10, 18  # central region ~8x8
+    center_mean = float(np.mean(img28[c0:c1, c0:c1]))
+    border_pixels = np.concatenate([
+        img28[0:4, :].flatten(), img28[-4:, :].flatten(), img28[:, 0:4].flatten(), img28[:, -4:].flatten()
+    ])
+    border_mean = float(np.mean(border_pixels)) if border_pixels.size else center_mean
+    auto_invert = center_mean < border_mean
+
     try:
         matrix = to_binary_matrix(
             img28,
             out_width=out_w,
             out_height=out_h,
             threshold=args.threshold,
-            invert=args.invert,
+            invert=(args.invert or auto_invert),
             method=args.method,
             fraction_required=args.fraction,
+            threshold_mode=args.threshold_mode,
         )
     except Exception as e:
         die(f"Failed to create binary matrix: {e}")
