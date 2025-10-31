@@ -4,14 +4,22 @@ import os
 from typing import List, Optional
 
 import numpy as np
+import psycopg2
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
+from db_config import get_db_params
 from emoji_fetcher import (
     fetch_emoji_catalog,
     fetch_random_emoji_image,
     fetch_random_from_custom_urls,
 )
 from processor import to_binary_matrix, preprocess_to_28x28
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 app = FastAPI(title="Nonogram Service")
@@ -121,6 +129,50 @@ def create_nonogram(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/auth/login")
+def login(credentials: LoginRequest):
+    """
+    Authenticate user by checking username and password in the database.
+    Returns user info if credentials are valid, raises HTTPException otherwise.
+    """
+    conn = None
+    try:
+        # Connect to database
+        db_params = get_db_params()
+        conn = psycopg2.connect(**db_params)
+        cursor = conn.cursor()
+
+        # Check user credentials
+        cursor.execute(
+            "SELECT id, username, is_admin FROM users WHERE username = %s AND password = %s",
+            (credentials.username, credentials.password),
+        )
+        result = cursor.fetchone()
+
+        if result is None:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+        user_id, username, is_admin = result
+
+        return {
+            "success": True,
+            "user": {
+                "id": user_id,
+                "username": username,
+                "is_admin": is_admin,
+            },
+        }
+    except HTTPException:
+        raise
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
 
 
 # For local debug: uvicorn server:app --reload

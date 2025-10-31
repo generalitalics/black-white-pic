@@ -70,6 +70,67 @@ curl "http://localhost:8000/nonogram/create?size=10x10"
 - `emoji_catalog_url` (повторяемый, чтобы переопределить URL каталога эмодзи)
 - `custom_emoji_url` (повторяемый, собственные URL картинок)
 
+### Аутентификация
+
+POST `/auth/login` — проверка username и password в БД:
+
+```bash
+curl -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "player1", "password": "password123"}'
+```
+
+Успешный ответ (200):
+```json
+{
+  "success": true,
+  "user": {
+    "id": 1,
+    "username": "player1",
+    "is_admin": true
+  }
+}
+```
+
+Ошибка при неверных данных (401):
+```json
+{
+  "detail": "Invalid username or password"
+}
+```
+
+**Настройка подключения к БД**: Параметры подключения хранятся в `db_config.py` или могут быть переопределены через переменные окружения:
+- `DB_HOST` (по умолчанию: localhost)
+- `DB_PORT` (по умолчанию: 5432)
+- `DB_NAME` (по умолчанию: nonogram_db)
+- `DB_USER` (по умолчанию: postgres)
+- `DB_PASSWORD` (по умолчанию: пустая строка)
+
+## База данных PostgreSQL
+
+Инициализация БД:
+
+```bash
+# Создайте БД PostgreSQL
+createdb nonogram_db
+
+# Примените скрипт инициализации
+psql -d nonogram_db -f init_db.sql
+```
+
+Или с указанием пользователя и хоста:
+```bash
+psql -h localhost -U postgres -d nonogram_db -f init_db.sql
+```
+
+Скрипт создаёт:
+- **users** — пользователи (2 примера: player1/password123, player2/secret456)
+- **difficulty** — уровни сложности (easy, medium, hard)
+- **levels** — уровни игры (5 easy, 10 medium, 15 hard)
+- **user_progress** — прогресс пользователей по уровням
+
+**Важно**: В продакшене пароли должны быть захешированы (например, с помощью bcrypt). В примере используются plaintext пароли только для тестирования.
+
 Пример вывода:
 
 ```json
