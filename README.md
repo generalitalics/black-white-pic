@@ -106,6 +106,176 @@ curl -X POST "http://localhost:8000/auth/login" \
 - `DB_USER` (по умолчанию: postgres)
 - `DB_PASSWORD` (по умолчанию: пустая строка)
 
+### Сохранение прогресса
+
+POST `/progress` или POST `/progress/save` — сохранить или обновить прогресс пользователя (новый формат для фронтенда):
+
+**Примечание**: `/progress/save` — алиас для `/progress`, создан для совместимости с фронтендом, который использует `/api/progress/save`.
+
+```bash
+curl -X POST "http://localhost:8000/progress" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "player1",
+    "level": 1,
+    "difficulty": "easy",
+    "matrix": [[0,1,0],[1,1,1],[0,1,0]],
+    "reason": "completed"
+  }'
+```
+
+Успешный ответ (200):
+```json
+{
+  "success": true,
+  "progress": {
+    "id": 1,
+    "username": "player1",
+    "level": 1,
+    "difficulty": "easy",
+    "status": "completed",
+    "reason": "completed",
+    "updated_at": "2024-01-15T10:30:00"
+  }
+}
+```
+
+GET `/progress` — получить прогресс пользователя (новый формат):
+
+```bash
+# Все уровни пользователя
+curl "http://localhost:8000/progress?username=player1"
+
+# Конкретный уровень
+curl "http://localhost:8000/progress?username=player1&difficulty=easy&level=1"
+```
+
+GET `/progress/check` — быстрая проверка наличия прогресса (без загрузки матрицы, для показа лоудера):
+
+```bash
+curl "http://localhost:8000/progress/check?username=player1&difficulty=easy&level=1"
+```
+
+Ответ при наличии прогресса:
+```json
+{
+  "success": true,
+  "has_progress": true,
+  "username": "player1",
+  "level": 1,
+  "difficulty": "easy",
+  "status": "completed",
+  "reason": "completed",
+  "updated_at": "2024-01-15T10:30:00"
+}
+```
+
+Ответ при отсутствии прогресса:
+```json
+{
+  "success": true,
+  "has_progress": false,
+  "username": "player1",
+  "level": 5,
+  "difficulty": "easy"
+}
+```
+
+**Параметры GET `/progress/check`**:
+- `username` (string, обязательный) — имя пользователя
+- `difficulty` (string, обязательный) — сложность: `easy`, `medium`, `hard`
+- `level` (int, обязательный) — номер уровня
+
+**Примечание**: Легковесный endpoint для быстрой проверки. Не возвращает матрицу, только метаданные. Используйте для показа лоудера перед загрузкой полного прогресса.
+
+GET `/progress/load` — загрузить сохранённый прогресс уровня (для открытия игрового уровня):
+
+```bash
+curl "http://localhost:8000/progress/load?username=player1&difficulty=easy&level=1"
+```
+
+Ответ при наличии сохранённого прогресса:
+```json
+{
+  "success": true,
+  "has_progress": true,
+  "username": "player1",
+  "level": 1,
+  "difficulty": "easy",
+  "matrix": [[0,1,0],[1,1,1],[0,1,0]],
+  "status": "completed",
+  "reason": "completed",
+  "updated_at": "2024-01-15T10:30:00"
+}
+```
+
+Ответ при отсутствии сохранённого прогресса:
+```json
+{
+  "success": true,
+  "has_progress": false,
+  "username": "player1",
+  "level": 5,
+  "difficulty": "easy",
+  "matrix": null,
+  "status": null,
+  "reason": null
+}
+```
+
+**Параметры GET `/progress/load`**:
+- `username` (string, обязательный) — имя пользователя
+- `difficulty` (string, обязательный) — сложность: `easy`, `medium`, `hard`
+- `level` (int, обязательный) — номер уровня
+
+**Примечание**: Endpoint возвращает самую свежую запись (по `updated_at DESC`) для данного пользователя и уровня. Если записи нет, возвращает `has_progress: false` и `matrix: null`.
+
+**Пример использования для фронтенда (с лоудером)**:
+
+```javascript
+// При переходе с экрана Levels на игровой уровень
+async function openLevel(username, difficulty, level) {
+  // 1. Показать лоудер сразу
+  showLoader();
+  
+  // 2. Быстрая проверка наличия прогресса (без матрицы)
+  const checkResponse = await fetch(
+    `/api/progress/check?username=${username}&difficulty=${difficulty}&level=${level}`
+  );
+  const checkData = await checkResponse.json();
+  
+  // 3. Загрузить полный прогресс с матрицей
+  const loadResponse = await fetch(
+    `/api/progress/load?username=${username}&difficulty=${difficulty}&level=${level}`
+  );
+  const loadData = await loadResponse.json();
+  
+  // 4. Скрыть лоудер и отрисовать уровень
+  hideLoader();
+  
+  if (loadData.has_progress && loadData.matrix) {
+    // Заполнить игровое поле сохранённой матрицей
+    fillGameBoard(loadData.matrix);
+  } else {
+    // Начать с пустого поля
+    initializeEmptyBoard();
+  }
+}
+```
+
+**Параметры POST `/progress`** (новый формат):
+- `username` (string, обязательный) — имя пользователя
+- `level` (int, обязательный) — номер уровня в рамках сложности (1, 2, 3...)
+- `difficulty` (string, обязательный) — сложность: `easy`, `medium`, `hard`
+- `matrix` (array, обязательный) — матрица решения как 2D массив 0 и 1
+- `reason` (string, обязательный) — причина обновления: `manual`, `back`, `next_level`, `completed`
+
+**Маппинг reason → status**:
+- `completed` → `status: "completed"`
+- `manual`, `back`, `next_level` → `status: "in_progress"`
+
+**Примечание**: Используется UPSERT — если запись уже существует, она обновляется; если нет — создаётся новая. API автоматически находит `user_id` по `username` и `level_id` по `difficulty` + `level`.
+
 ## База данных PostgreSQL
 
 Инициализация БД:

@@ -35,6 +35,7 @@ CREATE TABLE user_progress (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     level_id INTEGER NOT NULL REFERENCES levels(id) ON DELETE CASCADE,
     status VARCHAR(20) NOT NULL DEFAULT 'not_started', -- not_started, in_progress, completed
+    reason VARCHAR(20), -- manual, back, next_level, completed
     matrix JSONB, -- stores the solution matrix as JSON
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, level_id)
